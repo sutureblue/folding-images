@@ -86,6 +86,11 @@
     background:var(--paper);color:var(--ink);border:none;padding:5px 8px;cursor:pointer;
   }
   .slot button:hover{background:var(--teal);color:var(--paper);}
+  .slot-scales{display:flex;gap:10px;margin:6px 0 0;}
+  .slot-scales label{font-size:9px;letter-spacing:.05em;color:#a9a7a0;display:flex;flex-direction:column;gap:2px;flex:1;}
+  .slot-scales input[type=range]{accent-color:var(--rose-deep);}
+  .slot-wrap{border:1px solid #2c2c2c;padding:8px;background:#171717;margin-bottom:8px;}
+  .slot-wrap .slot{border:none;padding:0;background:none;margin:0;}
   .btnrow{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
   .btn{
     font-family:'Archivo';font-weight:600;letter-spacing:.08em;text-transform:uppercase;
@@ -147,6 +152,10 @@
     <div class="hint">Deeper folds turn the faces harder — you walk further to switch images.</div>
   </div>
   <div class="ctl">
+    <label>Panel height <b id="v-height">1.0</b></label>
+    <input id="height" type="range" min="0.3" max="2.5" step="0.05" value="1.0">
+  </div>
+  <div class="ctl">
     <label>Segment width <b id="v-segw">1.0</b></label>
     <input id="segw" type="range" min="0.3" max="2" step="0.05" value="1.0">
   </div>
@@ -183,6 +192,25 @@
   <div class="imgslots" id="slots"></div>
 
   <h2>Export</h2>
+  <div class="ctl">
+    <label>Paper size</label>
+    <select id="paper" style="width:100%;font-family:'Space Mono';font-size:12px;padding:6px;background:#171717;color:var(--paper);border:1px solid #2c2c2c;">
+      <option value="letter">Letter (8.5×11")</option>
+      <option value="legal">Legal (8.5×14")</option>
+      <option value="tabloid">Tabloid (11×17")</option>
+      <option value="a5">A5</option>
+      <option value="a4">A4</option>
+      <option value="a3">A3</option>
+    </select>
+  </div>
+  <div class="ctl">
+    <label>Orientation</label>
+    <select id="orientation" style="width:100%;font-family:'Space Mono';font-size:12px;padding:6px;background:#171717;color:var(--paper);border:1px solid #2c2c2c;">
+      <option value="landscape">Landscape</option>
+      <option value="portrait">Portrait</option>
+    </select>
+    <div class="hint">Sets the printed size of the template & front view. Print at 100% (no scaling) to fold at true size.</div>
+  </div>
   <div class="btnrow">
     <button class="btn" id="ex-slivers">Save every sliver <span class="k">↓</span></button>
     <button class="btn alt" id="ex-template">Save fold template <span class="k">↓</span></button>
@@ -391,12 +419,25 @@ const state = {
   foldCount: 8,
   depth: 1.0,
   segWidth: 1.0,
+  panelHeight: 1.0,    // height multiplier (world H = 3.0 * this)
   offset: 0,
   facetFront: 0.4,
   facetBack: 0.4,
   shape: 'rectangle',
-  images: [],          // {img, name} per image slot
+  images: [],          // {img, name, scaleX, scaleY} per image slot
   profile: null,
+  paper: 'letter',
+  orientation: 'landscape',
+};
+
+// standard paper sizes in millimetres (portrait W x H)
+const PAPER_SIZES = {
+  a4:      [210, 297],
+  a3:      [297, 420],
+  a5:      [148, 210],
+  letter:  [215.9, 279.4],
+  legal:   [215.9, 355.6],
+  tabloid: [279.4, 431.8],
 };
 
 const DIR_COLORS = ['#c08a8a','#3a9089','#c9a24a','#6a6a9c','#8a5a7a'];
@@ -410,22 +451,33 @@ function renderSlots(){
   const n = slotCount();
   for(let d=0; d<n; d++){
     const entry = state.images[d];
-    const div = document.createElement('div');
-    div.className = 'slot';
-    div.innerHTML = `
-      <span class="sw" style="background:${DIR_COLORS[d]}"></span>
-      <span class="meta">${entry ? entry.name : SLOT_LABELS[d]+' — empty'}</span>
-      <button>Load</button>
-      <input type="file" accept="image/*">`;
-    const input = div.querySelector('input');
-    div.querySelector('button').onclick = ()=>input.click();
+    const wrap = document.createElement('div');
+    wrap.className = 'slot-wrap';
+    wrap.innerHTML = `
+      <div class="slot">
+        <span class="sw" style="background:${DIR_COLORS[d]}"></span>
+        <span class="meta">${entry ? entry.name : SLOT_LABELS[d]+' — empty'}</span>
+        <button>Load</button>
+        <input type="file" accept="image/*">
+      </div>
+      ${entry ? `<div class="slot-scales">
+        <label>width ×${(entry.scaleX||1).toFixed(2)}<input type="range" class="sx" min="0.3" max="3" step="0.05" value="${entry.scaleX||1}"></label>
+        <label>height ×${(entry.scaleY||1).toFixed(2)}<input type="range" class="sy" min="0.3" max="3" step="0.05" value="${entry.scaleY||1}"></label>
+      </div>` : ''}`;
+    const input = wrap.querySelector('input[type=file]');
+    wrap.querySelector('button').onclick = ()=>input.click();
     input.onchange = e=>{
       const file = e.target.files[0]; if(!file) return;
       const img = new Image();
-      img.onload = ()=>{ state.images[d] = {img, name:file.name}; renderSlots(); rebuild(); };
+      img.onload = ()=>{ state.images[d] = {img, name:file.name, scaleX:1, scaleY:1}; renderSlots(); rebuild(); };
       img.src = URL.createObjectURL(file);
     };
-    slotsEl.appendChild(div);
+    if(entry){
+      const sx = wrap.querySelector('.sx'), sy = wrap.querySelector('.sy');
+      sx.oninput = ()=>{ entry.scaleX = parseFloat(sx.value); sx.parentElement.firstChild.textContent = 'width ×'+entry.scaleX.toFixed(2); rebuild(); };
+      sy.oninput = ()=>{ entry.scaleY = parseFloat(sy.value); sy.parentElement.firstChild.textContent = 'height ×'+entry.scaleY.toFixed(2); rebuild(); };
+    }
+    slotsEl.appendChild(wrap);
   }
 }
 
@@ -482,18 +534,29 @@ renderer.domElement.addEventListener('touchmove', e=>{
 renderer.domElement.addEventListener('touchend', ()=>{pinchDist=0;});
 
 // ---------- build 3D folded surface ----------
-function makeSliceTexture(imgEntry, slice, yb=0, yt=1){
-  // Draw the source sub-rect, vertically cropped to [yb,yt] of the image
-  // so the picture is cut to the silhouette outline just like the face.
+// Draw a slice into a texture that FILLS the trimmed face region
+// (object-fit: cover), applying the image's own scaleX/scaleY zoom.
+// faceAspect = faceWidthWorld / faceHeightWorld tells us the target shape.
+function makeSliceTexture(imgEntry, slice, faceAspect){
   const c = document.createElement('canvas');
   const Hc = 512;
-  const W = Math.max(2, Math.round(Hc * (slice.sw/slice.sh)));
-  c.width=W; c.height=Hc;
+  const W = Math.max(2, Math.round(Hc * faceAspect));
+  c.width = W; c.height = Hc;
   const ctx = c.getContext('2d');
-  // yb,yt are fractions from BOTTOM; image Y is top-down, so flip.
-  const srcY = slice.sy + (1 - yt) * slice.sh;
-  const srcH = (yt - yb) * slice.sh;
-  ctx.drawImage(imgEntry.img, slice.sx, srcY, slice.sw, srcH, 0,0,W,Hc);
+
+  const sX = imgEntry.scaleX || 1, sY = imgEntry.scaleY || 1;
+
+  // source slice (a vertical strip of the image)
+  const srcW = slice.sw, srcH = slice.sh;
+  // cover: scale source so it fills WxHc, keeping aspect, then apply
+  // the user's scale as extra zoom (values >1 zoom in, cropping more).
+  const scale = Math.max(W / srcW, Hc / srcH);
+  const drawW = srcW * scale * sX;
+  const drawH = srcH * scale * sY;
+  const dx = (W - drawW) / 2;
+  const dy = (Hc - drawH) / 2;
+  ctx.drawImage(imgEntry.img, slice.sx, slice.sy, srcW, srcH, dx, dy, drawW, drawH);
+
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -532,7 +595,7 @@ function rebuild(){
   // Then trim each face top/bottom to the chosen silhouette so the
   // folded SHEET itself takes the shape (circle, diamond, triangle…).
   const faces = state.profile.faces;
-  const H = 3.0;
+  const H = 3.0 * (state.panelHeight || 1.0);
   const shape = state.shape || 'rectangle';
 
   let vx = 0;
@@ -574,7 +637,8 @@ function rebuild(){
     const spanZ = p.z1 - p.z0;
     const len = Math.hypot(spanX, spanZ);
 
-    const tex = makeSliceTexture(state.images[slot], slice, yb, yt);
+    const faceAspect = Math.max(0.05, len / faceH);
+    const tex = makeSliceTexture(state.images[slot], slice, faceAspect);
 
     const geo = new THREE.PlaneGeometry(len, faceH);
     const mat = new THREE.MeshBasicMaterial({map:tex, side:THREE.DoubleSide, transparent:true});
@@ -606,7 +670,7 @@ loop();
 
 // ---------- controls wiring ----------
 const fmt = (key,v)=>{
-  if(['depth','segWidth','facetFront','facetBack','offset'].includes(key)) return v.toFixed(2);
+  if(['depth','segWidth','facetFront','facetBack','offset','panelHeight'].includes(key)) return v.toFixed(2);
   return v;
 };
 const bind = (id, key, disp, parse=parseFloat)=>{
@@ -626,11 +690,14 @@ const bind = (id, key, disp, parse=parseFloat)=>{
 bind('faces','facesPerFold','v-faces', v=>parseInt(v));
 bind('folds','foldCount','v-folds', v=>parseInt(v));
 bind('depth','depth','v-depth');
+bind('height','panelHeight','v-height');
 bind('segw','segWidth','v-segw');
 bind('offset','offset','v-offset');
 bind('facetf','facetFront','v-facetf');
 bind('facetb','facetBack','v-facetb');
 document.getElementById('shape').onchange = e=>{ state.shape = e.target.value; rebuild(); };
+document.getElementById('paper').onchange = e=>{ state.paper = e.target.value; };
+document.getElementById('orientation').onchange = e=>{ state.orientation = e.target.value; };
 document.getElementById('walk').oninput = e=>{ orbit = parseFloat(e.target.value); };
 
 // ---------- EXPORTS ----------
@@ -680,14 +747,27 @@ function download(canvas, filename){
   });
 }
 
-// Build a canvas for one face's slice at true-width aspect.
-function faceCanvas(imgEntry, slice, pxHeight=1024){
+// Paper dimensions in pixels at a given DPI, honoring orientation.
+function paperPx(dpi=150){
+  const s = window.AGAM.state;
+  let [wmm, hmm] = PAPER_SIZES[s.paper] || PAPER_SIZES.letter;
+  if(s.orientation === 'landscape'){ const t=wmm; wmm=hmm; hmm=t; }
+  const mmToPx = dpi / 25.4;
+  return { w: Math.round(wmm*mmToPx), h: Math.round(hmm*mmToPx), wmm, hmm, dpi };
+}
+
+// Build a canvas for one face's slice, filling WxH (cover) with the
+// image's own scale applied — matches the 3D viewer's makeSliceTexture.
+function faceCanvas(imgEntry, slice, pxW, pxH){
   const c=document.createElement('canvas');
-  const H=pxHeight;
-  const W=Math.max(2, Math.round(H*(slice.sw/slice.sh)));
-  c.width=W; c.height=H;
+  c.width=Math.max(2,Math.round(pxW)); c.height=Math.max(2,Math.round(pxH));
   const ctx=c.getContext('2d');
-  ctx.drawImage(imgEntry.img, slice.sx,slice.sy,slice.sw,slice.sh, 0,0,W,H);
+  const sX = imgEntry.scaleX||1, sY = imgEntry.scaleY||1;
+  const srcW=slice.sw, srcH=slice.sh;
+  const scale=Math.max(c.width/srcW, c.height/srcH);
+  const drawW=srcW*scale*sX, drawH=srcH*scale*sY;
+  const dx=(c.width-drawW)/2, dy=(c.height-drawH)/2;
+  ctx.drawImage(imgEntry.img, slice.sx,slice.sy,srcW,srcH, dx,dy,drawW,drawH);
   return c;
 }
 
@@ -706,7 +786,7 @@ window.AGAM_exportSlivers = async ()=>{
     const slices = computeSlices(e.img.naturalWidth,e.img.naturalHeight,groups[d],
                                  0, profile.faces.length);
     for(let i=0;i<slices.length;i++){
-      const c=faceCanvas(e,slices[i]);
+      const c=faceCanvas(e,slices[i], 400, 1024);
       const name=`${dirNames[d]||('dir'+d)}_${String(i+1).padStart(2,'0')}.png`;
       await new Promise(res=>{
         c.toBlob(b=>{
@@ -719,7 +799,7 @@ window.AGAM_exportSlivers = async ()=>{
   }
 };
 
-// ---------- 2. FOLD TEMPLATE (printable, flat, true-width) ----------
+// ---------- 2. FOLD TEMPLATE (printable, fits chosen paper) ----------
 window.AGAM_exportTemplate = ()=>{
   if(!ready()){ alert('Load an image in every slot first.'); return; }
   const s = window.AGAM.state;
@@ -729,88 +809,111 @@ window.AGAM_exportTemplate = ()=>{
   const dirSlices = groups.map((g,d)=>{
     const e=s.images[d];
     if(!e || g.length===0) return [];
-    return computeSlices(e.img.naturalWidth,e.img.naturalHeight,g,
-                         0, profile.faces.length);
+    return computeSlices(e.img.naturalWidth,e.img.naturalHeight,g,0,profile.faces.length);
   });
 
-  // layout in true-width space, all faces edge to edge in physical order
-  const H = 1200;                        // px face height
-  const unit = 240;                      // px per 1.0 trueWidth
-  const totalTW = totalTrueWidth(profile);
-  const W = Math.round(totalTW*unit) + 40;
-
+  const paper = paperPx(150);
   const c=document.createElement('canvas');
-  c.width=W; c.height=H+120;
+  c.width=paper.w; c.height=paper.h;
   const ctx=c.getContext('2d');
   ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c.width,c.height);
 
-  let x = 20;
-  const topY = 60, faceH = H;
+  // Fit the unrolled strip (total true width × panel height) into the
+  // paper with a margin, preserving aspect. Legend sits in bottom margin.
+  const margin = Math.round(paper.dpi*0.35);        // ~0.35" margin
+  const legendH = Math.round(paper.dpi*0.4);
+  const availW = paper.w - margin*2;
+  const availH = paper.h - margin*2 - legendH;
+  const totalTW = totalTrueWidth(profile);
+  const panelAspectH = 3.0 * (s.panelHeight||1);    // world height
+  // scale so the whole strip fits
+  const scale = Math.min(availW/totalTW, availH/panelAspectH);
+  const faceH = panelAspectH*scale;
+  const topY = margin + (availH - faceH)/2;
 
+  let x = margin + (availW - totalTW*scale)/2;
   for(const face of profile.faces){
     const slot = imageSlotOf(face);
     const slice = dirSlices[slot][dirCursor[slot]++];
     const e = s.images[slot];
-    const fw = Math.round(face.trueWidth*unit);
+    const fw = face.trueWidth*scale;
     if(e && slice){
-      const tmp=faceCanvas(e,slice,faceH);
+      const tmp=faceCanvas(e,slice, Math.max(2,fw*2), Math.max(2,faceH*2));
       ctx.drawImage(tmp, 0,0,tmp.width,tmp.height, x,topY,fw,faceH);
     }
-    // fold line at trailing edge
     const isMountain = face.foldKind==='mountain';
     ctx.strokeStyle = isMountain? '#9c6a6a':'#2a6b66';
-    ctx.lineWidth=2;
+    ctx.lineWidth=1.5;
     ctx.setLineDash(isMountain? [10,6]:[4,6]);
-    ctx.beginPath(); ctx.moveTo(x+fw,topY-14); ctx.lineTo(x+fw,topY+faceH+14); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+fw,topY-10); ctx.lineTo(x+fw,topY+faceH+10); ctx.stroke();
     ctx.setLineDash([]);
     x += fw;
   }
 
   // legend
-  ctx.fillStyle='#000'; ctx.font='20px monospace';
-  ctx.fillText('MOUNTAIN fold', 24, H+95);
-  ctx.strokeStyle='#9c6a6a'; ctx.setLineDash([10,6]); ctx.lineWidth=2;
-  ctx.beginPath(); ctx.moveTo(200,H+88); ctx.lineTo(280,H+88); ctx.stroke();
-  ctx.fillStyle='#000'; ctx.fillText('VALLEY fold', 320, H+95);
+  const ly = paper.h - margin - legendH/2;
+  ctx.fillStyle='#000'; ctx.font=`${Math.round(paper.dpi*0.11)}px monospace`;
+  ctx.fillText('MOUNTAIN', margin, ly+5);
+  ctx.strokeStyle='#9c6a6a'; ctx.setLineDash([10,6]); ctx.lineWidth=1.5;
+  ctx.beginPath(); ctx.moveTo(margin+140,ly); ctx.lineTo(margin+210,ly); ctx.stroke();
+  ctx.fillStyle='#000'; ctx.fillText('VALLEY', margin+240, ly+5);
   ctx.strokeStyle='#2a6b66'; ctx.setLineDash([4,6]);
-  ctx.beginPath(); ctx.moveTo(470,H+88); ctx.lineTo(550,H+88); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(margin+360,ly); ctx.lineTo(margin+430,ly); ctx.stroke();
   ctx.setLineDash([]);
+  ctx.fillStyle='#666'; ctx.font=`${Math.round(paper.dpi*0.09)}px monospace`;
+  ctx.fillText(`${s.paper.toUpperCase()} · ${s.orientation} · print at 100%`, margin, ly+Math.round(paper.dpi*0.22));
 
-  download(c, 'fold_template.png');
+  download(c, `fold_template_${s.paper}_${s.orientation}.png`);
 };
 
-// ---------- 3. FLAT FRONT VIEW (each image sliced & spread, aligned to itself) ----------
+// ---------- 3. FLAT FRONT VIEW (sliced & spread, fits chosen paper) ----------
 window.AGAM_exportFront = ()=>{
   if(!ready()){ alert('Load an image in every slot first.'); return; }
   const s = window.AGAM.state;
   const profile = currentProfile();
   const faces = profile.faces;
   const N = faces.length;
+  const shape = s.shape || 'rectangle';
 
-  const H = 1200;
-  const unit = 130;                       // px per 1.0 true width
-  const totalTW = faces.reduce((a,f)=>a+f.trueWidth,0);
-  const W = Math.round(totalTW*unit) + 40;
-  const c = document.createElement('canvas'); c.width=W; c.height=H+40;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#f6f5f1'; ctx.fillRect(0,0,c.width,c.height);
+  const paper = paperPx(150);
+  const c=document.createElement('canvas'); c.width=paper.w; c.height=paper.h;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#f6f5f1'; ctx.fillRect(0,0,c.width,c.height);
 
-  // Each face k shows source columns [k/N, (k+1)/N] of ITS image, drawn
-  // at its slot. Same-direction strips line up into the original image;
-  // the other image's strips sit interleaved between them.
-  let x = 20;
+  const margin = Math.round(paper.dpi*0.3);
+  const availW = paper.w - margin*2, availH = paper.h - margin*2;
+
+  // Front view width = sum of FRONT-projected widths (foreshortened).
+  const frontW = faces.map(f=> f.facet ? f.trueWidth : f.trueWidth*Math.cos(Math.atan2(2*(0.5*s.depth), s.segWidth)) );
+  const totalFW = frontW.reduce((a,b)=>a+b,0);
+  const panelH = 3.0*(s.panelHeight||1);
+  const scale = Math.min(availW/totalFW, availH/panelH);
+  const drawH = panelH*scale;
+  const topY = margin + (availH-drawH)/2;
+
+  let x = margin + (availW - totalFW*scale)/2;
   for(let k=0;k<N;k++){
     const face = faces[k];
     const e = s.images[imageSlotOf(face)];
-    const fw = Math.round(face.trueWidth*unit);
+    const fw = frontW[k]*scale;
+    // silhouette trim for this face
+    const xnCenter = (frontW.slice(0,k).reduce((a,b)=>a+b,0) + frontW[k]/2)/totalFW;
+    let [yb,yt] = silhouetteTrim(shape, xnCenter);
+    if(shape==='square'){ const m=(1-Math.min(1,panelH/(totalFW)))/2; if(xnCenter<m||xnCenter>1-m){x+=fw;continue;} yb=0;yt=1; }
+    if(yt-yb < 0.02){ x+=fw; continue; }
+    const segH = (yt-yb)*drawH;
+    const segTop = topY + (1-yt)*drawH;
     if(e){
-      const sx = (k/N)*e.img.naturalWidth;
-      const sw = (1/N)*e.img.naturalWidth;
-      ctx.drawImage(e.img, sx, 0, sw, e.img.naturalHeight, x, 20, fw, H);
+      const sx=(k/N)*e.img.naturalWidth, sw=(1/N)*e.img.naturalWidth;
+      const tmp=faceCanvas(e,{sx,sy:0,sw,sh:e.img.naturalHeight}, Math.max(2,fw*2), Math.max(2,segH*2));
+      ctx.drawImage(tmp,0,0,tmp.width,tmp.height, x,segTop,fw,segH);
     }
     x += fw;
   }
-  download(c,'front_view.png');
+  ctx.fillStyle='#666'; ctx.font=`${Math.round(paper.dpi*0.09)}px monospace`;
+  ctx.fillText(`${s.paper.toUpperCase()} · ${s.orientation}`, margin, paper.h-margin*0.4);
+
+  download(c,`front_view_${s.paper}_${s.orientation}.png`);
 };
 
 

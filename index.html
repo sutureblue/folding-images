@@ -1,0 +1,654 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Polyphon — Agam-style fold images</title>
+<style>
+  /* ---------- palette + type ----------
+     Vocabulary borrowed from Agam's reliefs: black/white vertical
+     rhythm, primaries used as punctuation, a paper-white ground.
+     Display face: a tight grotesque set very wide in caps for the
+     "kinetic signage" feel; body/UI: plain mono for the instrument. */
+  @import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400;600;900&family=Space+Mono:wght@400;700&display=swap');
+
+  :root{
+    --ink:#0a0a0a;
+    --paper:#f6f5f1;
+    --line:#d8d6cf;
+    --red:#e2231a;
+    --blue:#0b4de0;
+    --yellow:#f5c400;
+    --green:#0a9d4a;
+    --panel:#111;
+    --panel-ink:#f6f5f1;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;height:100%;}
+  body{
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Space Mono',monospace;
+    display:grid;
+    grid-template-columns:340px 1fr;
+    grid-template-rows:auto 1fr;
+    grid-template-areas:"head head" "side stage";
+    height:100vh;
+    overflow:hidden;
+  }
+  header{
+    grid-area:head;
+    border-bottom:2px solid var(--ink);
+    display:flex;align-items:baseline;gap:18px;
+    padding:14px 22px;
+    background:var(--paper);
+  }
+  header h1{
+    font-family:'Archivo',sans-serif;
+    font-weight:900;
+    letter-spacing:.22em;
+    font-size:22px;
+    margin:0;
+    text-transform:uppercase;
+  }
+  header .sub{font-size:11px;letter-spacing:.15em;color:#555;text-transform:uppercase;}
+  header .marks{margin-left:auto;display:flex;gap:6px;}
+  header .marks i{width:16px;height:16px;display:block;}
+  .m-red{background:var(--red);}.m-blue{background:var(--blue);}
+  .m-yellow{background:var(--yellow);}.m-green{background:var(--green);}
+
+  /* ---------- control rail ---------- */
+  aside{
+    grid-area:side;
+    background:var(--panel);
+    color:var(--panel-ink);
+    overflow-y:auto;
+    padding:18px 18px 60px;
+    border-right:2px solid var(--ink);
+  }
+  aside h2{
+    font-family:'Archivo',sans-serif;font-weight:900;
+    font-size:11px;letter-spacing:.2em;text-transform:uppercase;
+    margin:26px 0 12px;color:#8f8d86;
+    border-bottom:1px solid #2a2a2a;padding-bottom:6px;
+  }
+  aside h2:first-child{margin-top:0;}
+  .ctl{margin-bottom:16px;}
+  .ctl label{display:flex;justify-content:space-between;font-size:11px;letter-spacing:.05em;margin-bottom:6px;color:#cfcdc6;}
+  .ctl label b{color:var(--yellow);font-weight:700;}
+  input[type=range]{width:100%;accent-color:var(--red);}
+  .imgslots{display:flex;flex-direction:column;gap:8px;}
+  .slot{
+    border:1px solid #2c2c2c;padding:8px;display:flex;gap:8px;align-items:center;
+    background:#171717;
+  }
+  .slot .sw{width:26px;height:26px;flex:none;border:1px solid #333;}
+  .slot .meta{font-size:10px;line-height:1.3;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .slot input[type=file]{display:none;}
+  .slot button{
+    font-family:'Space Mono';font-size:10px;letter-spacing:.05em;
+    background:var(--paper);color:var(--ink);border:none;padding:5px 8px;cursor:pointer;
+  }
+  .slot button:hover{background:var(--yellow);}
+  .btnrow{display:flex;flex-direction:column;gap:8px;margin-top:8px;}
+  .btn{
+    font-family:'Archivo';font-weight:600;letter-spacing:.08em;text-transform:uppercase;
+    font-size:11px;padding:11px 12px;border:none;cursor:pointer;text-align:left;
+    display:flex;justify-content:space-between;align-items:center;
+    background:var(--paper);color:var(--ink);
+  }
+  .btn:hover{background:var(--red);color:var(--paper);}
+  .btn.alt:hover{background:var(--blue);color:var(--paper);}
+  .btn.alt2:hover{background:var(--green);color:var(--paper);}
+  .btn span.k{font-size:14px;}
+  .hint{font-size:10px;color:#77756e;line-height:1.5;margin-top:6px;}
+
+  /* ---------- stage ---------- */
+  main{grid-area:stage;position:relative;background:
+    repeating-linear-gradient(90deg,#efeee9 0 2px,transparent 2px 26px),
+    var(--paper);}
+  #view{position:absolute;inset:0;}
+  .stagebar{
+    position:absolute;left:0;right:0;bottom:0;
+    background:var(--panel);color:var(--panel-ink);
+    display:flex;align-items:center;gap:18px;padding:12px 20px;
+    border-top:2px solid var(--ink);
+  }
+  .stagebar .walk{flex:1;display:flex;align-items:center;gap:12px;}
+  .stagebar .walk span{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#8f8d86;white-space:nowrap;}
+  .stagebar input[type=range]{accent-color:var(--yellow);}
+  .stagebar .badge{font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:#cfcdc6;}
+  .tag{position:absolute;top:14px;left:16px;font-family:'Archivo';font-weight:900;
+    letter-spacing:.2em;font-size:11px;text-transform:uppercase;color:#8a8880;}
+  .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+    text-align:center;padding:40px;color:#8a8880;font-size:12px;letter-spacing:.05em;line-height:1.8;pointer-events:none;}
+  canvas.hidden-work{display:none;}
+</style>
+</head>
+<body>
+<header>
+  <h1>Polyphon</h1>
+  <span class="sub">fold-image studio · after Agam</span>
+  <div class="marks"><i class="m-red"></i><i class="m-yellow"></i><i class="m-blue"></i><i class="m-green"></i></div>
+</header>
+
+<aside>
+  <h2>Fold geometry</h2>
+  <div class="ctl">
+    <label>Images per fold <b id="v-faces">2</b></label>
+    <input id="faces" type="range" min="2" max="5" step="1" value="2">
+    <div class="hint">2 = left/right. 3 = left/front/right. More = finer transitions.</div>
+  </div>
+  <div class="ctl">
+    <label>Folds across width <b id="v-folds">8</b></label>
+    <input id="folds" type="range" min="2" max="24" step="1" value="8">
+  </div>
+  <div class="ctl">
+    <label>Fold depth <b id="v-depth">1.0</b></label>
+    <input id="depth" type="range" min="0.2" max="2" step="0.05" value="1.0">
+    <div class="hint">Deeper folds turn the faces harder — you walk further to switch images.</div>
+  </div>
+
+  <h2>Source images</h2>
+  <div class="imgslots" id="slots"></div>
+
+  <h2>Slice edges</h2>
+  <div class="ctl">
+    <label>Bleed <b id="v-bleed">0</b> px</label>
+    <input id="bleed" type="range" min="0" max="40" step="1" value="0">
+    <div class="hint">Extends each strip past the fold line so seams don't show when folded.</div>
+  </div>
+  <div class="ctl">
+    <label style="cursor:pointer;"><input type="checkbox" id="tabs" style="width:auto;accent-color:var(--red);"> Glue tabs on template</label>
+  </div>
+
+  <h2>Export</h2>
+  <div class="btnrow">
+    <button class="btn" id="ex-slivers">Save every sliver <span class="k">↓</span></button>
+    <button class="btn alt" id="ex-template">Save fold template <span class="k">↓</span></button>
+    <button class="btn alt2" id="ex-front">Save flat front view <span class="k">↓</span></button>
+  </div>
+  <div class="hint">Slivers download as a zip of PNGs, one per face. The template prints flat — cut it out and accordion-fold on the marked lines.</div>
+</aside>
+
+<main>
+  <div class="tag">walk-past viewer</div>
+  <div id="view"></div>
+  <div class="empty" id="empty">Load an image into each slot to begin.<br>Drag on the stage to look around, or use the walk slider below.</div>
+  <div class="stagebar">
+    <div class="walk">
+      <span>◄ left view</span>
+      <input id="walk" type="range" min="-1" max="1" step="0.001" value="0">
+      <span>right view ►</span>
+    </div>
+    <div class="badge" id="face-count">0 faces</div>
+  </div>
+</main>
+
+<canvas class="hidden-work" id="work"></canvas>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/0.160.0/three.module.min.js"
+}}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+
+// ===== inlined geometry.js =====
+// ============================================================
+// AGAM FOLD GEOMETRY — shared source of truth
+// ------------------------------------------------------------
+// A "profile" is an ordered list of faces across the width.
+// With N facesPerFold, faces cycle through facing directions
+// 0..N-1, then repeat. Direction 0 is the leftmost-viewing
+// face, direction N-1 the rightmost-viewing face.
+//
+// Every face is a flat quad (triangular-fold constraint).
+// Each face has:
+//   trueWidth  : real un-foreshortened width (fold-template space)
+//   dir        : which image slot / facing direction (0..N-1)
+//   angleDeg   : rotation about the vertical axis in 3D
+//   foldKind   : 'mountain' | 'valley' at its LEADING edge
+// ============================================================
+
+function buildProfile(opts) {
+  const {
+    facesPerFold = 2,   // N images interlaced
+    foldCount    = 8,   // number of complete folds across width
+    depth        = 1.0, // projection depth (drives face angle)
+    peakOffsets  = [],  // optional per-fold peak nudge (-1..1), length foldCount
+    faceWidth    = 1.0, // nominal true width of one face
+  } = opts;
+
+  const N = Math.max(2, Math.floor(facesPerFold));
+  const folds = Math.max(1, Math.floor(foldCount));
+
+  // The angle each face turns relative to the flat plane.
+  // Deeper folds => steeper faces => wider viewing swing to switch.
+  // Faces fan symmetrically around the front. For N faces the
+  // extreme faces turn by +/- baseAngle, interior faces interpolate.
+  const baseAngle = Math.min(75, 20 + depth * 35); // degrees
+
+  const faces = [];
+  let idx = 0;
+  for (let f = 0; f < folds; f++) {
+    const nudge = peakOffsets[f] || 0; // -1..1 widens/narrows this fold
+    for (let d = 0; d < N; d++) {
+      // map direction 0..N-1 onto angle -base .. +base
+      const t = N === 1 ? 0 : d / (N - 1);       // 0..1
+      const angleDeg = (t * 2 - 1) * baseAngle;  // -base..+base
+      const w = faceWidth * (1 + nudge * 0.4);   // peak nudge tweaks width
+
+      faces.push({
+        index: idx++,
+        dir: d,
+        angleDeg,
+        trueWidth: w,
+        foldKind: (idx % 2 === 0) ? 'valley' : 'mountain',
+      });
+    }
+  }
+  return { N, folds, baseAngle, faces };
+}
+
+// Total true width of all faces (fold-template length).
+function totalTrueWidth(profile) {
+  return profile.faces.reduce((s, f) => s + f.trueWidth, 0);
+}
+
+// Foreshortened (front-view) width of a face = trueWidth * cos(angle).
+function frontWidth(face) {
+  return face.trueWidth * Math.cos(face.angleDeg * Math.PI / 180);
+}
+
+// Group faces by direction (which image each belongs to).
+function facesByDir(profile) {
+  const groups = Array.from({ length: profile.N }, () => []);
+  for (const face of profile.faces) groups[face.dir].push(face);
+  return groups;
+}
+
+// ------------------------------------------------------------
+// SLICING
+// Given a source image (as a drawable of known width/height) and
+// the faces assigned to that image's direction, compute the source
+// rectangles. Each face gets a horizontal slab of the source image
+// proportional to its trueWidth among same-direction faces, in order.
+// `bleed` (px in source space) extends each slab past its edges.
+// ------------------------------------------------------------
+function computeSlices(imgW, imgH, dirFaces, bleed = 0) {
+  const totalW = dirFaces.reduce((s, f) => s + f.trueWidth, 0);
+  let cursor = 0;
+  const slices = [];
+  for (const face of dirFaces) {
+    const frac = face.trueWidth / totalW;
+    const sx = cursor * imgW;
+    const sw = frac * imgW;
+    cursor += frac;
+    slices.push({
+      face,
+      sx: Math.max(0, sx - bleed),
+      sw: Math.min(imgW - Math.max(0, sx - bleed), sw + bleed * 2),
+      sy: 0,
+      sh: imgH,
+    });
+  }
+  return slices;
+}
+
+
+// ===== inlined main app =====
+
+
+// ---------- state ----------
+const state = {
+  facesPerFold: 2,
+  foldCount: 8,
+  depth: 1.0,
+  bleed: 0,
+  tabs: false,
+  images: [],          // {img, name} per direction, length = facesPerFold
+  profile: null,
+};
+
+const DIR_COLORS = ['#e2231a','#0b4de0','#f5c400','#0a9d4a','#7a2fd0'];
+
+// ---------- image slots UI ----------
+const slotsEl = document.getElementById('slots');
+function renderSlots(){
+  slotsEl.innerHTML = '';
+  for(let d=0; d<state.facesPerFold; d++){
+    const entry = state.images[d];
+    const div = document.createElement('div');
+    div.className = 'slot';
+    div.innerHTML = `
+      <span class="sw" style="background:${DIR_COLORS[d]}"></span>
+      <span class="meta">${entry ? entry.name : 'direction '+(d+1)+' — empty'}</span>
+      <button>Load</button>
+      <input type="file" accept="image/*">`;
+    const input = div.querySelector('input');
+    div.querySelector('button').onclick = ()=>input.click();
+    input.onchange = e=>{
+      const file = e.target.files[0]; if(!file) return;
+      const img = new Image();
+      img.onload = ()=>{ state.images[d] = {img, name:file.name}; renderSlots(); rebuild(); };
+      img.src = URL.createObjectURL(file);
+    };
+    slotsEl.appendChild(div);
+  }
+}
+
+// ---------- three.js scene ----------
+const viewEl = document.getElementById('view');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf6f5f1);
+const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 100);
+const renderer = new THREE.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+viewEl.appendChild(renderer.domElement);
+scene.add(new THREE.AmbientLight(0xffffff, 0.85));
+const key = new THREE.DirectionalLight(0xffffff, 0.6); key.position.set(0,1,2); scene.add(key);
+
+const foldGroup = new THREE.Group();
+scene.add(foldGroup);
+
+let orbit = 0;        // -1..1 walk position
+let dragging=false, lastX=0;
+
+function resize(){
+  const w = viewEl.clientWidth, h = viewEl.clientHeight;
+  renderer.setSize(w,h); camera.aspect = w/h; camera.updateProjectionMatrix();
+}
+window.addEventListener('resize', resize);
+
+renderer.domElement.addEventListener('pointerdown', e=>{dragging=true;lastX=e.clientX;});
+window.addEventListener('pointerup', ()=>dragging=false);
+window.addEventListener('pointermove', e=>{
+  if(!dragging) return;
+  orbit = Math.max(-1, Math.min(1, orbit + (e.clientX-lastX)*0.004));
+  lastX = e.clientX;
+  document.getElementById('walk').value = orbit;
+});
+
+// ---------- build 3D folded surface ----------
+function makeSliceTexture(imgEntry, slice){
+  // draw the source sub-rect onto a canvas at true-width aspect
+  const c = document.createElement('canvas');
+  const H = 512;
+  const W = Math.max(2, Math.round(H * (slice.sw/slice.sh)));
+  c.width=W; c.height=H;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(imgEntry.img, slice.sx, slice.sy, slice.sw, slice.sh, 0,0,W,H);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function rebuild(){
+  // clear
+  while(foldGroup.children.length) foldGroup.remove(foldGroup.children[0]);
+
+  const ready = state.images.length >= state.facesPerFold &&
+                Array.from({length:state.facesPerFold},(_,d)=>state.images[d]).every(Boolean);
+  document.getElementById('empty').style.display = ready ? 'none':'flex';
+
+  state.profile = buildProfile({
+    facesPerFold: state.facesPerFold,
+    foldCount: state.foldCount,
+    depth: state.depth,
+    faceWidth: 1.0,
+  });
+  document.getElementById('face-count').textContent = state.profile.faces.length + ' faces';
+
+  if(!ready){ render(); return; }
+
+  const groups = facesByDir(state.profile);
+  // precompute slices per direction
+  const dirSlices = groups.map((dirFaces,d)=>{
+    const e = state.images[d];
+    return computeSlices(e.img.naturalWidth, e.img.naturalHeight, dirFaces,
+                         state.bleed * (e.img.naturalWidth/1000));
+  });
+
+  // Build a real accordion: each face is a quad of its TRUE width,
+  // rotated about Y by its angle, and chained edge-to-edge so a
+  // shared fold edge is continuous. We walk a 2D "pen" across the
+  // cross-section, turning by each face's angle — like unrolling the
+  // fold in the XZ plane. This makes peaks/valleys physically meet.
+  const faces = state.profile.faces;
+  const H = 3.0; // world height
+
+  // First pass: compute each face's endpoints in the XZ cross-section.
+  let px = 0, pz = 0;
+  const placed = [];
+  for(const face of faces){
+    const a = face.angleDeg * Math.PI/180;
+    const dx = Math.cos(a) * face.trueWidth;   // advance along X
+    const dz = Math.sin(a) * face.trueWidth;   // in/out (fold depth)
+    placed.push({face, x0:px, z0:pz, x1:px+dx, z1:pz+dz, a});
+    px += dx; pz += dz;
+  }
+  // center the whole run
+  const cx = px/2;
+  const dirCursor = groups.map(()=>0);
+
+  for(const p of placed){
+    const slice = dirSlices[p.face.dir][dirCursor[p.face.dir]++];
+    const tex = makeSliceTexture(state.images[p.face.dir], slice);
+    const geo = new THREE.PlaneGeometry(p.face.trueWidth, H);
+    const mat = new THREE.MeshBasicMaterial({map:tex, side:THREE.DoubleSide});
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.y = -p.a;
+    mesh.position.x = (p.x0 + p.x1)/2 - cx;
+    mesh.position.z = (p.z0 + p.z1)/2;
+    foldGroup.add(mesh);
+  }
+  resize(); render();
+}
+
+function render(){
+  // camera arcs left/right as you "walk"
+  const ang = orbit * 0.9;            // radians of swing
+  const R = 7.5;
+  camera.position.set(Math.sin(ang)*R, 0, Math.cos(ang)*R);
+  camera.lookAt(0,0,0);
+  renderer.render(scene,camera);
+}
+function loop(){ requestAnimationFrame(loop); render(); }
+loop();
+
+// ---------- controls wiring ----------
+const bind = (id, key, disp, parse=parseFloat)=>{
+  const el = document.getElementById(id);
+  const out = document.getElementById(disp);
+  el.oninput = ()=>{
+    state[key] = parse(el.value);
+    if(out) out.textContent = (key==='depth')? state[key].toFixed(2): state[key];
+    if(key==='facesPerFold'){ state.images.length = state.facesPerFold; renderSlots(); }
+    rebuild();
+  };
+};
+bind('faces','facesPerFold','v-faces', v=>parseInt(v));
+bind('folds','foldCount','v-folds', v=>parseInt(v));
+bind('depth','depth','v-depth');
+bind('bleed','bleed','v-bleed', v=>parseInt(v));
+document.getElementById('tabs').onchange = e=>{ state.tabs = e.target.checked; };
+document.getElementById('walk').oninput = e=>{ orbit = parseFloat(e.target.value); };
+
+// ---------- EXPORTS ----------
+// export handlers (defined below) attach to window
+
+window.AGAM = { state, buildProfile, facesByDir, computeSlices, frontWidth, totalTrueWidth };
+
+document.getElementById('ex-slivers').onclick  = ()=>window.AGAM_exportSlivers();
+document.getElementById('ex-template').onclick = ()=>window.AGAM_exportTemplate();
+document.getElementById('ex-front').onclick    = ()=>window.AGAM_exportFront();
+
+// ---------- init ----------
+renderSlots();
+rebuild();
+resize();
+
+
+// ===== inlined exports.js =====
+// ============================================================
+// EXPORTS — slivers, fold template, flat front view
+// Uses the same profile + slicing as the 3D viewer so outputs
+// are guaranteed consistent. No build step, no zip library:
+// slivers are bundled into a single downloadable sheet AND
+// offered individually via a tiny sequential download.
+// ============================================================
+function currentProfile(){
+  const s = window.AGAM.state;
+  return buildProfile({
+    facesPerFold: s.facesPerFold,
+    foldCount: s.foldCount,
+    depth: s.depth,
+    faceWidth: 1.0,
+  });
+}
+function ready(){
+  const s = window.AGAM.state;
+  return Array.from({length:s.facesPerFold},(_,d)=>s.images[d]).every(Boolean);
+}
+function download(canvas, filename){
+  canvas.toBlob(blob=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob); a.download=filename;
+    a.click(); setTimeout(()=>URL.revokeObjectURL(a.href),1000);
+  });
+}
+
+// Build a canvas for one face's slice at true-width aspect.
+function faceCanvas(imgEntry, slice, pxHeight=1024){
+  const c=document.createElement('canvas');
+  const H=pxHeight;
+  const W=Math.max(2, Math.round(H*(slice.sw/slice.sh)));
+  c.width=W; c.height=H;
+  const ctx=c.getContext('2d');
+  ctx.drawImage(imgEntry.img, slice.sx,slice.sy,slice.sw,slice.sh, 0,0,W,H);
+  return c;
+}
+
+// ---------- 1. SLIVERS (individual files) ----------
+window.AGAM_exportSlivers = async ()=>{
+  if(!ready()){ alert('Load an image in every slot first.'); return; }
+  const s = window.AGAM.state;
+  const profile = currentProfile();
+  const groups = facesByDir(profile);
+  const dirNames = ['left','right','face3','face4','face5'];
+
+  for(let d=0; d<s.facesPerFold; d++){
+    const e = s.images[d];
+    const slices = computeSlices(e.img.naturalWidth,e.img.naturalHeight,groups[d],
+                                 s.bleed*(e.img.naturalWidth/1000));
+    for(let i=0;i<slices.length;i++){
+      const c=faceCanvas(e,slices[i]);
+      const name=`${dirNames[d]||('dir'+d)}_${String(i+1).padStart(2,'0')}.png`;
+      await new Promise(res=>{
+        c.toBlob(b=>{
+          const a=document.createElement('a');
+          a.href=URL.createObjectURL(b); a.download=name; a.click();
+          setTimeout(()=>{URL.revokeObjectURL(a.href);res();},250);
+        });
+      });
+    }
+  }
+};
+
+// ---------- 2. FOLD TEMPLATE (printable, flat, true-width) ----------
+window.AGAM_exportTemplate = ()=>{
+  if(!ready()){ alert('Load an image in every slot first.'); return; }
+  const s = window.AGAM.state;
+  const profile = currentProfile();
+  const groups = facesByDir(profile);
+  const dirCursor = groups.map(()=>0);
+  const dirSlices = groups.map((g,d)=>{
+    const e=s.images[d];
+    return computeSlices(e.img.naturalWidth,e.img.naturalHeight,g,
+                         s.bleed*(e.img.naturalWidth/1000));
+  });
+
+  // layout in true-width space, all faces edge to edge in physical order
+  const H = 1200;                        // px face height
+  const unit = 240;                      // px per 1.0 trueWidth
+  const tab = s.tabs ? 40 : 0;
+  const totalTW = totalTrueWidth(profile);
+  const W = Math.round(totalTW*unit) + tab*2 + 40;
+
+  const c=document.createElement('canvas');
+  c.width=W; c.height=H+120;
+  const ctx=c.getContext('2d');
+  ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c.width,c.height);
+
+  let x = 20 + tab;
+  const topY = 60, faceH = H;
+
+  for(const face of profile.faces){
+    const slice = dirSlices[face.dir][dirCursor[face.dir]++];
+    const e = s.images[face.dir];
+    const fw = Math.round(face.trueWidth*unit);
+    // draw the strip at TRUE width
+    const tmp=faceCanvas(e,slice,faceH);
+    ctx.drawImage(tmp, 0,0,tmp.width,tmp.height, x,topY,fw,faceH);
+    // fold line at trailing edge
+    const isMountain = face.foldKind==='mountain';
+    ctx.strokeStyle = isMountain? '#e2231a':'#0b4de0';
+    ctx.lineWidth=2;
+    ctx.setLineDash(isMountain? [10,6]:[4,6]);
+    ctx.beginPath(); ctx.moveTo(x+fw,topY-14); ctx.lineTo(x+fw,topY+faceH+14); ctx.stroke();
+    ctx.setLineDash([]);
+    x += fw;
+  }
+
+  // legend + registration
+  ctx.fillStyle='#000'; ctx.font='20px monospace';
+  ctx.fillText('MOUNTAIN fold', 24, H+95);
+  ctx.strokeStyle='#e2231a'; ctx.setLineDash([10,6]); ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(200,H+88); ctx.lineTo(280,H+88); ctx.stroke();
+  ctx.fillStyle='#000'; ctx.fillText('VALLEY fold', 320, H+95);
+  ctx.strokeStyle='#0b4de0'; ctx.setLineDash([4,6]);
+  ctx.beginPath(); ctx.moveTo(470,H+88); ctx.lineTo(550,H+88); ctx.stroke();
+  ctx.setLineDash([]);
+
+  download(c, 'agam_fold_template.png');
+};
+
+// ---------- 3. FLAT FRONT VIEW (what it looks like head-on, foreshortened) ----------
+window.AGAM_exportFront = ()=>{
+  if(!ready()){ alert('Load an image in every slot first.'); return; }
+  const s = window.AGAM.state;
+  const profile = currentProfile();
+  const groups = facesByDir(profile);
+  const dirCursor = groups.map(()=>0);
+  const dirSlices = groups.map((g,d)=>{
+    const e=s.images[d];
+    return computeSlices(e.img.naturalWidth,e.img.naturalHeight,g,
+                         s.bleed*(e.img.naturalWidth/1000));
+  });
+
+  const H=1200;
+  const totalFront = profile.faces.reduce((a,f)=>a+frontWidth(f),0);
+  const unit = 1600/totalFront;
+  const W = Math.round(totalFront*unit)+40;
+  const c=document.createElement('canvas'); c.width=W; c.height=H+40;
+  const ctx=c.getContext('2d'); ctx.fillStyle='#f6f5f1'; ctx.fillRect(0,0,c.width,c.height);
+
+  let x=20;
+  for(const face of profile.faces){
+    const slice=dirSlices[face.dir][dirCursor[face.dir]++];
+    const e=s.images[face.dir];
+    const fw=Math.round(frontWidth(face)*unit);
+    const tmp=faceCanvas(e,slice,H);
+    ctx.drawImage(tmp,0,0,tmp.width,tmp.height, x,20,fw,H);
+    x+=fw;
+  }
+  download(c,'agam_front_view.png');
+};
+
+
+</script>
+</body>
+</html>

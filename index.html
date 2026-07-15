@@ -278,15 +278,18 @@ function facesByDir(profile) {
 // proportional to its trueWidth among same-direction faces, in order.
 // `bleed` (px in source space) extends each slab past its edges.
 // ------------------------------------------------------------
-function computeSlices(imgW, imgH, dirFaces, bleed = 0) {
-  const totalW = dirFaces.reduce((s, f) => s + f.trueWidth, 0);
-  let cursor = 0;
+function computeSlices(imgW, imgH, dirFaces, bleed = 0, totalFaces = null, globalIndexOf = null) {
+  // POSITION-BASED slicing (Model B): every face samples the source
+  // columns at its TRUE position across the full width, so each image
+  // stays aligned with itself. Face at global position k of N total
+  // gets source columns [k/N, (k+1)/N]. dir faces are just the subset
+  // we return slices for, but positions come from the global layout.
   const slices = [];
   for (const face of dirFaces) {
-    const frac = face.trueWidth / totalW;
-    const sx = cursor * imgW;
-    const sw = frac * imgW;
-    cursor += frac;
+    const k = globalIndexOf ? globalIndexOf(face) : face.index;
+    const N = totalFaces || dirFaces.length;
+    const sx = (k / N) * imgW;
+    const sw = (1 / N) * imgW;
     slices.push({
       face,
       sx: Math.max(0, sx - bleed),
@@ -409,7 +412,8 @@ function rebuild(){
   const dirSlices = groups.map((dirFaces,d)=>{
     const e = state.images[d];
     return computeSlices(e.img.naturalWidth, e.img.naturalHeight, dirFaces,
-                         state.bleed * (e.img.naturalWidth/1000));
+                         state.bleed * (e.img.naturalWidth/1000),
+                         state.profile.faces.length);
   });
 
   // Build a real accordion as a continuous zig-zag polyline in the XZ
@@ -578,7 +582,8 @@ window.AGAM_exportSlivers = async ()=>{
   for(let d=0; d<s.facesPerFold; d++){
     const e = s.images[d];
     const slices = computeSlices(e.img.naturalWidth,e.img.naturalHeight,groups[d],
-                                 s.bleed*(e.img.naturalWidth/1000));
+                                 s.bleed*(e.img.naturalWidth/1000),
+                                 profile.faces.length);
     for(let i=0;i<slices.length;i++){
       const c=faceCanvas(e,slices[i]);
       const name=`${dirNames[d]||('dir'+d)}_${String(i+1).padStart(2,'0')}.png`;
@@ -603,7 +608,8 @@ window.AGAM_exportTemplate = ()=>{
   const dirSlices = groups.map((g,d)=>{
     const e=s.images[d];
     return computeSlices(e.img.naturalWidth,e.img.naturalHeight,g,
-                         s.bleed*(e.img.naturalWidth/1000));
+                         s.bleed*(e.img.naturalWidth/1000),
+                         profile.faces.length);
   });
 
   // layout in true-width space, all faces edge to edge in physical order
@@ -651,34 +657,32 @@ window.AGAM_exportTemplate = ()=>{
   download(c, 'agam_fold_template.png');
 };
 
-// ---------- 3. FLAT FRONT VIEW (what it looks like head-on, foreshortened) ----------
+// ---------- 3. FLAT FRONT VIEW (each image sliced & spread, aligned to itself) ----------
 window.AGAM_exportFront = ()=>{
   if(!ready()){ alert('Load an image in every slot first.'); return; }
   const s = window.AGAM.state;
   const profile = currentProfile();
-  const groups = facesByDir(profile);
-  const dirCursor = groups.map(()=>0);
-  const dirSlices = groups.map((g,d)=>{
-    const e=s.images[d];
-    return computeSlices(e.img.naturalWidth,e.img.naturalHeight,g,
-                         s.bleed*(e.img.naturalWidth/1000));
-  });
+  const N = profile.faces.length;
 
-  const H=1200;
-  const totalFront = profile.faces.reduce((a,f)=>a+frontWidth(f),0);
-  const unit = 1600/totalFront;
-  const W = Math.round(totalFront*unit)+40;
-  const c=document.createElement('canvas'); c.width=W; c.height=H+40;
-  const ctx=c.getContext('2d'); ctx.fillStyle='#f6f5f1'; ctx.fillRect(0,0,c.width,c.height);
+  const H = 1200;
+  const stripW = 120;                 // equal width per face
+  const W = N * stripW + 40;
+  const c = document.createElement('canvas'); c.width=W; c.height=H+40;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#f6f5f1'; ctx.fillRect(0,0,c.width,c.height);
 
-  let x=20;
-  for(const face of profile.faces){
-    const slice=dirSlices[face.dir][dirCursor[face.dir]++];
-    const e=s.images[face.dir];
-    const fw=Math.round(frontWidth(face)*unit);
-    const tmp=faceCanvas(e,slice,H);
-    ctx.drawImage(tmp,0,0,tmp.width,tmp.height, x,20,fw,H);
-    x+=fw;
+  // Each face k shows source columns [k/N, (k+1)/N] of ITS image, drawn
+  // at slot k. Same-direction strips therefore line up into the original
+  // image; the other image's strips sit interleaved between them.
+  let x = 20;
+  for(let k=0; k<N; k++){
+    const face = profile.faces[k];
+    const e = s.images[face.dir];
+    const bleedPx = s.bleed * (e.img.naturalWidth/1000);
+    const sx = Math.max(0, (k/N)*e.img.naturalWidth - bleedPx);
+    const sw = Math.min(e.img.naturalWidth - sx, (1/N)*e.img.naturalWidth + bleedPx*2);
+    ctx.drawImage(e.img, sx, 0, sw, e.img.naturalHeight, x, 20, stripW, H);
+    x += stripW;
   }
   download(c,'agam_front_view.png');
 };

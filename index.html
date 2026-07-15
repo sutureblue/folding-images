@@ -212,11 +212,11 @@
     <div class="hint">Sets the printed size of the template & front view. Print at 100% (no scaling) to fold at true size.</div>
   </div>
   <div class="btnrow">
-    <button class="btn" id="ex-slivers">Save every sliver <span class="k">↓</span></button>
-    <button class="btn alt" id="ex-template">Save fold template <span class="k">↓</span></button>
-    <button class="btn alt2" id="ex-front">Save flat front view <span class="k">↓</span></button>
+    <button class="btn" id="ex-stripe">Save stripe template <span class="k">↓</span></button>
+    <button class="btn alt" id="ex-slivers">Save every sliver <span class="k">↓</span></button>
+    <button class="btn alt2" id="ex-front">Save photo preview <span class="k">↓</span></button>
   </div>
-  <div class="hint">Slivers save one PNG per face. The template prints flat — cut it out and accordion-fold on the marked lines.</div>
+  <div class="hint">The stripe template is your registration guide: each band is one face at true width — white = left, black = right, grey = facet. Drop your photos onto the bands in Photoshop, print at 100%, fold on the marked lines.</div>
 </aside>
 
 <main>
@@ -706,7 +706,7 @@ document.getElementById('walk').oninput = e=>{ orbit = parseFloat(e.target.value
 window.AGAM = { state, buildProfile, facesByDir, computeSlices, frontWidth, totalTrueWidth };
 
 document.getElementById('ex-slivers').onclick  = ()=>window.AGAM_exportSlivers();
-document.getElementById('ex-template').onclick = ()=>window.AGAM_exportTemplate();
+document.getElementById('ex-stripe').onclick   = ()=>window.AGAM_exportStripe();
 document.getElementById('ex-front').onclick    = ()=>window.AGAM_exportFront();
 
 // ---------- init ----------
@@ -799,71 +799,104 @@ window.AGAM_exportSlivers = async ()=>{
   }
 };
 
-// ---------- 2. FOLD TEMPLATE (printable, fits chosen paper) ----------
-window.AGAM_exportTemplate = ()=>{
-  if(!ready()){ alert('Load an image in every slot first.'); return; }
+// ---------- 2. STRIPE TEMPLATE (coded registration guide, fits paper) ----------
+// One vertical band per face at TRUE width. Tone = channel:
+//   white = left (slot 0), black = right (slot 1), grey = facet (slot 2).
+// Fold lines mark every boundary. No photos — this is the guide you
+// composite against in Photoshop. Does not require images to be loaded.
+window.AGAM_exportStripe = ()=>{
   const s = window.AGAM.state;
   const profile = currentProfile();
-  const groups = facesByDir(profile);
-  const dirCursor = groups.map(()=>0);
-  const dirSlices = groups.map((g,d)=>{
-    const e=s.images[d];
-    if(!e || g.length===0) return [];
-    return computeSlices(e.img.naturalWidth,e.img.naturalHeight,g,0,profile.faces.length);
-  });
+  const faces = profile.faces;
 
-  const paper = paperPx(150);
+  const paper = paperPx(300);                 // 300 DPI for crisp print
   const c=document.createElement('canvas');
   c.width=paper.w; c.height=paper.h;
   const ctx=c.getContext('2d');
   ctx.fillStyle='#ffffff'; ctx.fillRect(0,0,c.width,c.height);
 
-  // Fit the unrolled strip (total true width × panel height) into the
-  // paper with a margin, preserving aspect. Legend sits in bottom margin.
-  const margin = Math.round(paper.dpi*0.35);        // ~0.35" margin
-  const legendH = Math.round(paper.dpi*0.4);
-  const availW = paper.w - margin*2;
-  const availH = paper.h - margin*2 - legendH;
+  const margin  = Math.round(paper.dpi*0.4);  // 0.4" margin
+  const labelH  = Math.round(paper.dpi*0.5);  // bottom legend band
+  const availW  = paper.w - margin*2;
+  const availH  = paper.h - margin*2 - labelH;
+
+  // Fit the full unrolled strip to the available width; height fills
+  // available height. True widths are preserved as proportions, so the
+  // whole piece is as large as the paper allows at accurate ratios.
   const totalTW = totalTrueWidth(profile);
-  const panelAspectH = 3.0 * (s.panelHeight||1);    // world height
-  // scale so the whole strip fits
-  const scale = Math.min(availW/totalTW, availH/panelAspectH);
-  const faceH = panelAspectH*scale;
-  const topY = margin + (availH - faceH)/2;
+  const scale   = availW / totalTW;
+  const bandH   = availH;
+  const topY    = margin;
 
-  let x = margin + (availW - totalTW*scale)/2;
-  for(const face of profile.faces){
+  const TONE = { 0:'#ffffff', 1:'#000000', 2:'#808080' };
+  const LABEL= { 0:'L', 1:'R', 2:'F' };
+
+  // draw bands
+  let x = margin;
+  faces.forEach((face, i)=>{
     const slot = imageSlotOf(face);
-    const slice = dirSlices[slot][dirCursor[slot]++];
-    const e = s.images[slot];
     const fw = face.trueWidth*scale;
-    if(e && slice){
-      const tmp=faceCanvas(e,slice, Math.max(2,fw*2), Math.max(2,faceH*2));
-      ctx.drawImage(tmp, 0,0,tmp.width,tmp.height, x,topY,fw,faceH);
-    }
-    const isMountain = face.foldKind==='mountain';
-    ctx.strokeStyle = isMountain? '#9c6a6a':'#2a6b66';
-    ctx.lineWidth=1.5;
-    ctx.setLineDash(isMountain? [10,6]:[4,6]);
-    ctx.beginPath(); ctx.moveTo(x+fw,topY-10); ctx.lineTo(x+fw,topY+faceH+10); ctx.stroke();
-    ctx.setLineDash([]);
+    ctx.fillStyle = TONE[slot] ?? '#808080';
+    ctx.fillRect(x, topY, fw, bandH);
+    // thin separator so adjacent same-tone bands are still distinguishable
+    ctx.strokeStyle = '#bbbbbb'; ctx.lineWidth = 1;
+    ctx.strokeRect(x+0.5, topY+0.5, fw-1, bandH-1);
     x += fw;
-  }
+  });
 
-  // legend
-  const ly = paper.h - margin - legendH/2;
-  ctx.fillStyle='#000'; ctx.font=`${Math.round(paper.dpi*0.11)}px monospace`;
-  ctx.fillText('MOUNTAIN', margin, ly+5);
-  ctx.strokeStyle='#9c6a6a'; ctx.setLineDash([10,6]); ctx.lineWidth=1.5;
-  ctx.beginPath(); ctx.moveTo(margin+140,ly); ctx.lineTo(margin+210,ly); ctx.stroke();
-  ctx.fillStyle='#000'; ctx.fillText('VALLEY', margin+240, ly+5);
-  ctx.strokeStyle='#2a6b66'; ctx.setLineDash([4,6]);
-  ctx.beginPath(); ctx.moveTo(margin+360,ly); ctx.lineTo(margin+430,ly); ctx.stroke();
-  ctx.setLineDash([]);
+  // fold lines on top of bands (mountain vs valley), and a face index
+  x = margin;
+  ctx.textAlign='center';
+  faces.forEach((face, i)=>{
+    const fw = face.trueWidth*scale;
+    const isMountain = face.foldKind==='mountain';
+    // boundary at the trailing edge
+    ctx.strokeStyle = isMountain ? '#e2231a' : '#0b4de0';
+    ctx.lineWidth = 2;
+    ctx.setLineDash(isMountain ? [14,8] : [4,8]);
+    ctx.beginPath(); ctx.moveTo(x+fw, topY-6); ctx.lineTo(x+fw, topY+bandH+6); ctx.stroke();
+    ctx.setLineDash([]);
+    // small face index at top (readable on any tone)
+    const slot = imageSlotOf(face);
+    ctx.fillStyle = (slot===1) ? '#ffffff' : '#000000';
+    ctx.font = `${Math.round(paper.dpi*0.10)}px monospace`;
+    if(fw > paper.dpi*0.12){
+      ctx.fillText(`${i+1}${LABEL[slot]||''}`, x+fw/2, topY+Math.round(paper.dpi*0.22));
+    }
+    x += fw;
+  });
+  ctx.textAlign='left';
+
+  // legend in bottom band
+  const ly = paper.h - margin - labelH/2;
+  const fs = Math.round(paper.dpi*0.11);
+  ctx.font = `${fs}px monospace`;
+  const chip = (cx, fill, txt)=>{
+    ctx.fillStyle = fill; ctx.fillRect(cx, ly-fs*0.8, fs, fs);
+    ctx.strokeStyle='#999'; ctx.lineWidth=1; ctx.strokeRect(cx+0.5, ly-fs*0.8+0.5, fs-1, fs-1);
+    ctx.fillStyle='#000'; ctx.fillText(txt, cx+fs*1.3, ly+fs*0.15);
+  };
+  let lx = margin;
+  chip(lx, '#ffffff', 'Left (L)');  lx += paper.dpi*1.4;
+  chip(lx, '#000000', 'Right (R)'); lx += paper.dpi*1.5;
+  if(profile.N>=3){ chip(lx, '#808080', 'Facet (F)'); lx += paper.dpi*1.5; }
+
+  // fold-line legend
+  ctx.strokeStyle='#e2231a'; ctx.setLineDash([14,8]); ctx.lineWidth=2;
+  ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx+paper.dpi*0.4, ly); ctx.stroke();
+  ctx.setLineDash([]); ctx.fillStyle='#000';
+  ctx.fillText('mountain', lx+paper.dpi*0.5, ly+fs*0.15); lx += paper.dpi*1.7;
+  ctx.strokeStyle='#0b4de0'; ctx.setLineDash([4,8]);
+  ctx.beginPath(); ctx.moveTo(lx, ly); ctx.lineTo(lx+paper.dpi*0.4, ly); ctx.stroke();
+  ctx.setLineDash([]); ctx.fillStyle='#000';
+  ctx.fillText('valley', lx+paper.dpi*0.5, ly+fs*0.15);
+
+  // paper note
   ctx.fillStyle='#666'; ctx.font=`${Math.round(paper.dpi*0.09)}px monospace`;
-  ctx.fillText(`${s.paper.toUpperCase()} · ${s.orientation} · print at 100%`, margin, ly+Math.round(paper.dpi*0.22));
+  ctx.fillText(`${s.paper.toUpperCase()} · ${s.orientation} · ${faces.length} faces · print at 100% (no scaling)`,
+               margin, paper.h - margin*0.35);
 
-  download(c, `fold_template_${s.paper}_${s.orientation}.png`);
+  download(c, `stripe_template_${s.paper}_${s.orientation}.png`);
 };
 
 // ---------- 3. FLAT FRONT VIEW (sliced & spread, fits chosen paper) ----------

@@ -412,45 +412,80 @@ function rebuild(){
                          state.bleed * (e.img.naturalWidth/1000));
   });
 
-  // Build a real accordion: each face is a quad of its TRUE width,
-  // rotated about Y by its angle, and chained edge-to-edge so a
-  // shared fold edge is continuous. We walk a 2D "pen" across the
-  // cross-section, turning by each face's angle — like unrolling the
-  // fold in the XZ plane. This makes peaks/valleys physically meet.
+  // Build a real accordion as a continuous zig-zag polyline in the XZ
+  // cross-section. Vertices alternate peak (+Z, toward viewer) and
+  // valley (-Z, away). Face n spans vertex n -> vertex n+1, so every
+  // fold edge is SHARED by its two neighbours — no gaps, no overlap.
+  //
+  //   peak   valley  peak   valley        (z alternates)
+  //    /\    /\    /\                      each "/" or "\" is one face
+  //   /  \  /  \  /  \
+  //
+  // Each face's front-projected width comes from its true width and
+  // tilt; the depth of the zig-zag comes from `depth`.
   const faces = state.profile.faces;
   const H = 3.0; // world height
 
-  // First pass: compute each face's endpoints in the XZ cross-section.
-  let px = 0, pz = 0;
-  const placed = [];
-  for(const face of faces){
-    const a = face.angleDeg * Math.PI/180;
-    const dx = Math.cos(a) * face.trueWidth;   // advance along X
-    const dz = Math.sin(a) * face.trueWidth;   // in/out (fold depth)
-    placed.push({face, x0:px, z0:pz, x1:px+dx, z1:pz+dz, a});
-    px += dx; pz += dz;
+  // Peak/valley excursion in Z. Tie it to depth so the slider does
+  // something visible. Faces then tilt by atan(zAmp / (frontW/2)).
+  const zAmp = 0.35 * state.depth;
+
+  // First, lay all vertices along X using each face's FRONT width so
+  // the surface reads at the right on-screen size, then assign
+  // alternating Z to make the zig-zag.
+  const frontW = faces.map(f=>{
+    // front width = trueWidth * cos(tilt); tilt derived below, but for
+    // a symmetric accordion every face has the same tilt magnitude, so
+    // approximate front width directly from trueWidth and a nominal
+    // tilt that keeps total width stable.
+    return f.trueWidth;
+  });
+
+  // vertices: one more than faces
+  const verts = [];
+  let vx = 0;
+  for(let i=0;i<=faces.length;i++){
+    const z = (i % 2 === 0) ? zAmp : -zAmp;   // alternate peak/valley
+    verts.push({x:vx, z});
+    if(i < faces.length) vx += frontW[i];
   }
-  // center the whole run
-  const cx = px/2;
+  const cx = vx/2;
   const dirCursor = groups.map(()=>0);
 
-  for(const p of placed){
-    const slice = dirSlices[p.face.dir][dirCursor[p.face.dir]++];
-    const tex = makeSliceTexture(state.images[p.face.dir], slice);
-    const geo = new THREE.PlaneGeometry(p.face.trueWidth, H);
+  for(let i=0;i<faces.length;i++){
+    const face = faces[i];
+    const v0 = verts[i], v1 = verts[i+1];
+    const slice = dirSlices[face.dir][dirCursor[face.dir]++];
+    const tex = makeSliceTexture(state.images[face.dir], slice);
+
+    // real length of this face (hypotenuse of the X span and Z step)
+    const spanX = v1.x - v0.x;
+    const spanZ = v1.z - v0.z;
+    const len = Math.hypot(spanX, spanZ);
+
+    const geo = new THREE.PlaneGeometry(len, H);
     const mat = new THREE.MeshBasicMaterial({map:tex, side:THREE.DoubleSide});
     const mesh = new THREE.Mesh(geo, mat);
-    mesh.rotation.y = -p.a;
-    mesh.position.x = (p.x0 + p.x1)/2 - cx;
-    mesh.position.z = (p.z0 + p.z1)/2;
+
+    // orient the face along the (spanX, spanZ) direction, about Y
+    mesh.rotation.y = -Math.atan2(spanZ, spanX);
+    mesh.position.x = (v0.x + v1.x)/2 - cx;
+    mesh.position.z = (v0.z + v1.z)/2;
     foldGroup.add(mesh);
   }
   resize(); render();
 }
 
 function render(){
-  // camera arcs left/right as you "walk"
-  const ang = orbit * 0.9;            // radians of swing
+  // Camera arcs left/right as you "walk". The swing is tuned so the
+  // slider extremes land exactly where a whole image reads flat-on:
+  // face tilt for the current depth is atan(2*zAmp / avgFaceWidth).
+  // We swing a bit past that so image A / image B fully resolve.
+  const zAmp = 0.35 * state.depth;
+  const avgW = 1.0; // faceWidth nominal
+  const faceTilt = Math.atan2(2*zAmp, avgW);   // radians
+  const swing = Math.min(1.2, faceTilt * 1.15);
+  const ang = orbit * swing;
   const R = 7.5;
   camera.position.set(Math.sin(ang)*R, 0, Math.cos(ang)*R);
   camera.lookAt(0,0,0);

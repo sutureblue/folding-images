@@ -151,14 +151,19 @@
     <input id="segw" type="range" min="0.3" max="2" step="0.05" value="1.0">
   </div>
   <div class="ctl">
-    <label>Taper <b id="v-taper">0</b></label>
-    <input id="taper" type="range" min="-0.8" max="0.8" step="0.02" value="0">
+    <label>Offset Segments <b id="v-offset">0</b></label>
+    <input id="offset" type="range" min="-0.8" max="0.8" step="0.02" value="0">
     <div class="hint">Varies segment widths smoothly across the panel. 0 = all equal.</div>
   </div>
-  <div class="ctl" id="facet-ctl" style="display:none;">
-    <label>Peak facet width <b id="v-facet">0.4</b></label>
-    <input id="facet" type="range" min="0.1" max="1.5" step="0.05" value="0.4">
-    <div class="hint">Width of the flat facet added at each peak (for 3 and 4 images).</div>
+  <div class="ctl" id="facet-front-ctl" style="display:none;">
+    <label>Front facet width <b id="v-facetf">0.4</b></label>
+    <input id="facetf" type="range" min="0.1" max="1.5" step="0.05" value="0.4">
+    <div class="hint">Width of the flat facets at peaks facing you (3 and 4).</div>
+  </div>
+  <div class="ctl" id="facet-back-ctl" style="display:none;">
+    <label>Back facet width <b id="v-facetb">0.4</b></label>
+    <input id="facetb" type="range" min="0.1" max="1.5" step="0.05" value="0.4">
+    <div class="hint">Width of the flat facets at valleys facing away (4 only).</div>
   </div>
 
   <h2>Silhouette</h2>
@@ -189,7 +194,7 @@
 <main>
   <div class="tag">walk-past viewer</div>
   <div id="view"></div>
-  <div class="empty" id="empty">Load an image into each slot to begin.<br>Drag on the stage to look around, or use the walk slider below.</div>
+  <div class="empty" id="empty">Load an image into each slot to begin.<br>Drag to look around · scroll to zoom · walk slider below.</div>
   <div class="stagebar">
     <div class="walk">
       <span>◄ left view</span>
@@ -235,57 +240,90 @@ import * as THREE from 'three';
 
 function buildProfile(opts) {
   const {
-    facesPerFold = 2,
-    foldCount    = 8,
-    depth        = 1.0,
-    faceWidth    = 1.0,   // base segment width multiplier
-    taper        = 0,     // -0.8..0.8 smoothly varies widths across panel
-    facetWidth   = 0.4,   // width of the flat peak/valley facet (3,4)
+    facesPerFold   = 2,
+    foldCount      = 8,
+    depth          = 1.0,
+    faceWidth      = 1.0,   // base segment width multiplier
+    offset         = 0,     // -0.8..0.8 smoothly varies widths across panel
+    facetFront     = 0.4,   // width of the flat facet at PEAKS (toward viewer)
+    facetBack      = 0.4,   // width of the flat facet at VALLEYS (away)
   } = opts;
 
   const N = Math.min(4, Math.max(2, Math.floor(facesPerFold)));
   const folds = Math.max(1, Math.floor(foldCount));
-  const zAmp = 0.5 * depth;   // peak/valley excursion in Z
+  const zAmp = 0.5 * depth;
 
-  // Build the cross-section as a list of segments. We walk left→right.
-  // A "unit" is one peak-to-valley span. Each fold = up-slant + down-slant.
-  // For N=3 we insert a forward facet at each peak; N=4 also a back facet
-  // at each valley.
-  const seg = [];   // {dir, w, zStart, zEnd}
-  let atPeak = true; // first vertex is a peak (toward viewer)
-
+  // Cross-section walked left→right. Each fold: up-slant to a peak, an
+  // optional forward facet at the peak (N>=3), down-slant to a valley,
+  // an optional back facet at the valley (N==4).
+  //
+  //  N=2:  /\/\/\        N=3:  /‾\_/‾\_      N=4:  /‾\__/‾\__
+  //                            (peak facet)       (peak + valley facets)
+  //
+  // A facet is a flat vertical face. Front facets sit at +zAmp; back
+  // facets sit at -zAmp. Both are coplanar-to-screen, but back facets
+  // are pushed to the rear so the fold reads as a notch, not a ridge.
+  const seg = [];
   for (let f = 0; f < folds; f++) {
-    // up-slant: valley(-z) -> peak(+z), left-facing (dir 0)
-    seg.push({ dir: 0, zStart: -zAmp, zEnd: +zAmp });
-    // facet facing viewer at the peak (N>=3)
-    if (N >= 3) seg.push({ dir: 2, zStart: +zAmp, zEnd: +zAmp, facet: true });
-    // down-slant: peak(+z) -> valley(-z), right-facing (dir 1)
-    seg.push({ dir: 1, zStart: +zAmp, zEnd: -zAmp });
-    // facet facing away at the valley (N==4)
-    if (N >= 4) seg.push({ dir: 2, zStart: -zAmp, zEnd: -zAmp, facet: true });
+    seg.push({ dir: 0, zStart: -zAmp, zEnd: +zAmp });                      // up-slant
+    if (N >= 3) seg.push({ dir: 2, zStart: +zAmp, zEnd: +zAmp, facet:'front' });
+    seg.push({ dir: 1, zStart: +zAmp, zEnd: -zAmp });                      // down-slant
+    if (N >= 4) seg.push({ dir: 3, zStart: -zAmp, zEnd: -zAmp, facet:'back' });
   }
 
-  // assign widths with taper. taper bows widths across the panel:
-  // position p in 0..1, width factor = 1 + taper*cos(pi*(2p-1)) so the
-  // center bulges (taper>0) or pinches (taper<0). Facets use facetWidth.
+  // widths: slants bow with `offset`; facets use their own front/back width.
   const faces = [];
   const M = seg.length;
   seg.forEach((s, i) => {
     const p = M <= 1 ? 0.5 : i / (M - 1);
-    const bow = 1 + taper * Math.cos(Math.PI * (2 * p - 1));
-    const w = s.facet ? facetWidth : faceWidth * Math.max(0.15, bow);
+    const bow = 1 + offset * Math.cos(Math.PI * (2 * p - 1));
+    let w;
+    if (s.facet === 'front') w = facetFront;
+    else if (s.facet === 'back') w = facetBack;
+    else w = faceWidth * Math.max(0.15, bow);
     faces.push({
       index: i,
       dir: s.dir,
       trueWidth: w,
       zStart: s.zStart,
       zEnd: s.zEnd,
-      facet: !!s.facet,
+      facet: s.facet || null,
       foldKind: (i % 2 === 0) ? 'mountain' : 'valley',
     });
   });
 
   return { N, folds, faces, zAmp };
+}
+
+// Silhouette trim: for a face spanning normalized X positions [x0n,x1n]
+// across the whole panel (0..1), return the {top, bottom} of the shape
+// as fractions of panel height (0=bottom,1=top) at the face CENTER.
+// Used to trim faces top/bottom so the folded sheet takes the shape.
+function silhouetteTrim(shape, xn){
+  // xn: 0..1 horizontal position. Returns [yBottom, yTop] in 0..1.
+  const cx = 0.5;
+  switch(shape){
+    case 'circle': {
+      const dx = (xn - cx) / 0.5;                 // -1..1
+      const half = Math.sqrt(Math.max(0, 1 - dx*dx)) * 0.5;
+      return [0.5 - half, 0.5 + half];
+    }
+    case 'diamond': {
+      const half = (0.5 - Math.abs(xn - cx)) ;    // full height at center
+      return [0.5 - half, 0.5 + half];
+    }
+    case 'triangle': {
+      // apex at top-center, base full width at bottom
+      const top = 1 - Math.abs(xn - cx) * 2;      // height of apex line
+      return [0, Math.max(0, top)];
+    }
+    case 'square': {
+      // square = centered square using min dimension; here full height band
+      // narrower in X handled by caller; keep full height
+      return [0, 1];
+    }
+    default: return [0, 1];                        // rectangle
+  }
 }
 
 // Total true width of all faces (fold-template length).
@@ -300,10 +338,15 @@ function frontWidth(face) {
   return face.trueWidth; // slants are placed by true width along X; see viewer
 }
 
-// Group faces by direction (which image each belongs to).
+// Which IMAGE SLOT a face samples: 0=left, 1=right, 2=facets (front+back).
+function imageSlotOf(face){
+  return (face.dir === 3) ? 2 : face.dir;
+}
+
+// Group faces by IMAGE SLOT (so both facet kinds share slot 2).
 function facesByDir(profile) {
-  const groups = Array.from({ length: Math.max(3, profile.N) }, () => []);
-  for (const face of profile.faces) groups[face.dir].push(face);
+  const groups = [[],[],[]];
+  for (const face of profile.faces) groups[imageSlotOf(face)].push(face);
   return groups;
 }
 
@@ -348,8 +391,9 @@ const state = {
   foldCount: 8,
   depth: 1.0,
   segWidth: 1.0,
-  taper: 0,
-  facetWidth: 0.4,
+  offset: 0,
+  facetFront: 0.4,
+  facetBack: 0.4,
   shape: 'rectangle',
   images: [],          // {img, name} per image slot
   profile: null,
@@ -400,6 +444,7 @@ const foldGroup = new THREE.Group();
 scene.add(foldGroup);
 
 let orbit = 0;        // -1..1 walk position
+let zoom = 1;         // camera distance multiplier (0.4 close .. 3 far)
 let dragging=false, lastX=0;
 
 function resize(){
@@ -417,15 +462,38 @@ window.addEventListener('pointermove', e=>{
   document.getElementById('walk').value = orbit;
 });
 
+// scroll wheel = zoom
+renderer.domElement.addEventListener('wheel', e=>{
+  e.preventDefault();
+  zoom = Math.max(0.4, Math.min(3, zoom * (1 + Math.sign(e.deltaY)*0.08)));
+}, {passive:false});
+
+// pinch to zoom (touch)
+let pinchDist = 0;
+renderer.domElement.addEventListener('touchmove', e=>{
+  if(e.touches.length===2){
+    const dx=e.touches[0].clientX-e.touches[1].clientX;
+    const dy=e.touches[0].clientY-e.touches[1].clientY;
+    const d=Math.hypot(dx,dy);
+    if(pinchDist){ zoom = Math.max(0.4, Math.min(3, zoom * (pinchDist/d))); }
+    pinchDist=d; e.preventDefault();
+  }
+},{passive:false});
+renderer.domElement.addEventListener('touchend', ()=>{pinchDist=0;});
+
 // ---------- build 3D folded surface ----------
-function makeSliceTexture(imgEntry, slice){
-  // draw the source sub-rect onto a canvas at true-width aspect
+function makeSliceTexture(imgEntry, slice, yb=0, yt=1){
+  // Draw the source sub-rect, vertically cropped to [yb,yt] of the image
+  // so the picture is cut to the silhouette outline just like the face.
   const c = document.createElement('canvas');
-  const H = 512;
-  const W = Math.max(2, Math.round(H * (slice.sw/slice.sh)));
-  c.width=W; c.height=H;
+  const Hc = 512;
+  const W = Math.max(2, Math.round(Hc * (slice.sw/slice.sh)));
+  c.width=W; c.height=Hc;
   const ctx = c.getContext('2d');
-  ctx.drawImage(imgEntry.img, slice.sx, slice.sy, slice.sw, slice.sh, 0,0,W,H);
+  // yb,yt are fractions from BOTTOM; image Y is top-down, so flip.
+  const srcY = slice.sy + (1 - yt) * slice.sh;
+  const srcH = (yt - yb) * slice.sh;
+  ctx.drawImage(imgEntry.img, slice.sx, srcY, slice.sw, srcH, 0,0,W,Hc);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -444,8 +512,8 @@ function rebuild(){
     foldCount: state.foldCount,
     depth: state.depth,
     faceWidth: state.segWidth,
-    taper: state.taper,
-    facetWidth: state.facetWidth,
+    offset: state.offset,
+    facetFront: state.facetFront, facetBack: state.facetBack,
   });
   document.getElementById('face-count').textContent = state.profile.faces.length + ' faces';
 
@@ -460,14 +528,13 @@ function rebuild(){
                          0, state.profile.faces.length);
   });
 
-  // Place faces along X using their true width, with Z taken from the
-  // profile's cross-section (zStart/zEnd). Facets have zStart==zEnd, so
-  // they render as flat planes parallel to the screen at the peak (or
-  // valley for N=4). Faces share edges, so the surface is continuous.
+  // Place faces along X by true width; Z from the cross-section.
+  // Then trim each face top/bottom to the chosen silhouette so the
+  // folded SHEET itself takes the shape (circle, diamond, triangle…).
   const faces = state.profile.faces;
   const H = 3.0;
+  const shape = state.shape || 'rectangle';
 
-  // running X, with each face occupying its true width along the panel
   let vx = 0;
   const placed = [];
   for(const face of faces){
@@ -476,73 +543,49 @@ function rebuild(){
     vx += face.trueWidth;
   }
   const cx = vx/2;
+  const panelW = vx;
+  // For 'square', constrain the X-extent used by the silhouette so the
+  // shape is a centered square of side = min(panelW, H-in-world).
   const dirCursor = groups.map(()=>0);
 
   for(const p of placed){
     const face = p.face;
-    const slice = dirSlices[face.dir][dirCursor[face.dir]++];
+    const slot = imageSlotOf(face);
+    const slice = dirSlices[slot][dirCursor[slot]++];
     if(!slice) continue;
-    const tex = makeSliceTexture(state.images[face.dir], slice);
+
+    // silhouette trim at this face's horizontal center
+    const xnCenter = ((p.x0 + p.x1)/2) / panelW;   // 0..1
+    let [yb, yt] = silhouetteTrim(shape, xnCenter);
+    if(shape==='square'){
+      // centered square: crop X to a band and keep full height inside it
+      const side = Math.min(panelW, H) / Math.max(panelW, H);
+      const margin = (1 - Math.min(1, H/panelW)) / 2;
+      const inBand = xnCenter > margin && xnCenter < 1-margin;
+      if(!inBand){ continue; }   // outside the square's width → cut
+      yb = 0; yt = 1;
+    }
+    if(yt - yb < 0.02) continue;                    // fully trimmed away
+
+    const faceH = (yt - yb) * H;
+    const faceCenterY = (yb + yt)/2 * H - H/2;       // world Y center
 
     const spanX = p.x1 - p.x0;
     const spanZ = p.z1 - p.z0;
     const len = Math.hypot(spanX, spanZ);
 
-    const geo = new THREE.PlaneGeometry(len, H);
-    const mat = new THREE.MeshBasicMaterial({map:tex, side:THREE.DoubleSide});
+    const tex = makeSliceTexture(state.images[slot], slice, yb, yt);
+
+    const geo = new THREE.PlaneGeometry(len, faceH);
+    const mat = new THREE.MeshBasicMaterial({map:tex, side:THREE.DoubleSide, transparent:true});
     const mesh = new THREE.Mesh(geo, mat);
     mesh.rotation.y = -Math.atan2(spanZ, spanX);
     mesh.position.x = (p.x0 + p.x1)/2 - cx;
+    mesh.position.y = faceCenterY;
     mesh.position.z = (p.z0 + p.z1)/2;
     foldGroup.add(mesh);
   }
-  applySilhouette(vx, H);
   resize(); render();
-}
-
-// Crop the folded panel to the chosen silhouette by placing a single
-// paper-colored "matte" frame in front of the surface: a big rectangle
-// with the silhouette outline punched out as a hole. Whatever falls
-// outside the hole is hidden behind paper; inside, the folds show
-// through. Exact circle/diamond/triangle/square with no per-face math.
-function applySilhouette(panelW, panelH){
-  for(let i=foldGroup.children.length-1;i>=0;i--){
-    if(foldGroup.children[i].isCover) foldGroup.remove(foldGroup.children[i]);
-  }
-  const shape = state.shape || 'rectangle';
-  if(shape==='rectangle') return;
-
-  const cx = 0, cy = 0;
-  const halfW = panelW/2, halfH = panelH/2;
-  const big = Math.max(panelW, panelH) * 2;
-
-  // outer rectangle (the matte), CCW
-  const matte = new THREE.Shape();
-  matte.moveTo(-big, -big); matte.lineTo(big, -big);
-  matte.lineTo(big, big);   matte.lineTo(-big, big);
-  matte.lineTo(-big, -big);
-
-  // hole path = the silhouette, wound opposite
-  const hole = new THREE.Path();
-  const r = Math.min(halfW, halfH);
-  if(shape==='circle'){
-    const seg=64;
-    for(let i=0;i<=seg;i++){ const a=(i/seg)*Math.PI*2; const x=cx+Math.cos(a)*halfW*0.98; const y=cy+Math.sin(a)*halfH*0.98; i?hole.lineTo(x,y):hole.moveTo(x,y); }
-  } else if(shape==='diamond'){
-    hole.moveTo(cx, cy+halfH); hole.lineTo(cx+halfW, cy); hole.lineTo(cx, cy-halfH); hole.lineTo(cx-halfW, cy); hole.lineTo(cx, cy+halfH);
-  } else if(shape==='triangle'){
-    hole.moveTo(cx, cy+halfH); hole.lineTo(cx+halfW, cy-halfH); hole.lineTo(cx-halfW, cy-halfH); hole.lineTo(cx, cy+halfH);
-  } else if(shape==='square'){
-    const s=Math.min(halfW,halfH); hole.moveTo(cx-s,cy-s); hole.lineTo(cx+s,cy-s); hole.lineTo(cx+s,cy+s); hole.lineTo(cx-s,cy+s); hole.lineTo(cx-s,cy-s);
-  }
-  matte.holes.push(hole);
-
-  const geo = new THREE.ShapeGeometry(matte);
-  const mat = new THREE.MeshBasicMaterial({color:0xf6f5f1, side:THREE.DoubleSide});
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.z = 2.2;   // in front of the panel
-  mesh.isCover = true;
-  foldGroup.add(mesh);
 }
 
 function render(){
@@ -553,7 +596,7 @@ function render(){
   const faceTilt = Math.atan2(2*zAmp, segW);
   const swing = Math.min(1.25, faceTilt * 1.15);
   const ang = orbit * swing;
-  const R = 7.5;
+  const R = 7.5 * zoom;                 // zoom pulls the camera in/out
   camera.position.set(Math.sin(ang)*R, 0, Math.cos(ang)*R);
   camera.lookAt(0,0,0);
   renderer.render(scene,camera);
@@ -563,8 +606,7 @@ loop();
 
 // ---------- controls wiring ----------
 const fmt = (key,v)=>{
-  if(key==='depth'||key==='segWidth'||key==='facetWidth') return v.toFixed(2);
-  if(key==='taper') return v.toFixed(2);
+  if(['depth','segWidth','facetFront','facetBack','offset'].includes(key)) return v.toFixed(2);
   return v;
 };
 const bind = (id, key, disp, parse=parseFloat)=>{
@@ -574,7 +616,8 @@ const bind = (id, key, disp, parse=parseFloat)=>{
     state[key] = parse(el.value);
     if(out) out.textContent = fmt(key, state[key]);
     if(key==='facesPerFold'){
-      document.getElementById('facet-ctl').style.display = state.facesPerFold>=3 ? 'block':'none';
+      document.getElementById('facet-front-ctl').style.display = state.facesPerFold>=3 ? 'block':'none';
+      document.getElementById('facet-back-ctl').style.display  = state.facesPerFold>=4 ? 'block':'none';
       renderSlots();
     }
     rebuild();
@@ -584,8 +627,9 @@ bind('faces','facesPerFold','v-faces', v=>parseInt(v));
 bind('folds','foldCount','v-folds', v=>parseInt(v));
 bind('depth','depth','v-depth');
 bind('segw','segWidth','v-segw');
-bind('taper','taper','v-taper');
-bind('facet','facetWidth','v-facet');
+bind('offset','offset','v-offset');
+bind('facetf','facetFront','v-facetf');
+bind('facetb','facetBack','v-facetb');
 document.getElementById('shape').onchange = e=>{ state.shape = e.target.value; rebuild(); };
 document.getElementById('walk').oninput = e=>{ orbit = parseFloat(e.target.value); };
 
@@ -619,8 +663,8 @@ function currentProfile(){
     foldCount: s.foldCount,
     depth: s.depth,
     faceWidth: s.segWidth,
-    taper: s.taper,
-    facetWidth: s.facetWidth,
+    offset: s.offset,
+    facetFront: s.facetFront, facetBack: s.facetBack,
   });
 }
 function ready(){
@@ -704,8 +748,9 @@ window.AGAM_exportTemplate = ()=>{
   const topY = 60, faceH = H;
 
   for(const face of profile.faces){
-    const slice = dirSlices[face.dir][dirCursor[face.dir]++];
-    const e = s.images[face.dir];
+    const slot = imageSlotOf(face);
+    const slice = dirSlices[slot][dirCursor[slot]++];
+    const e = s.images[slot];
     const fw = Math.round(face.trueWidth*unit);
     if(e && slice){
       const tmp=faceCanvas(e,slice,faceH);
@@ -756,7 +801,7 @@ window.AGAM_exportFront = ()=>{
   let x = 20;
   for(let k=0;k<N;k++){
     const face = faces[k];
-    const e = s.images[face.dir];
+    const e = s.images[imageSlotOf(face)];
     const fw = Math.round(face.trueWidth*unit);
     if(e){
       const sx = (k/N)*e.img.naturalWidth;

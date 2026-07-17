@@ -205,12 +205,12 @@
     <div class="hint">Deeper folds turn the faces harder — you walk further to switch images.</div>
   </div>
   <div class="ctl">
-    <label>Panel height <b id="v-height">1.0</b></label>
-    <input id="height" type="range" min="0.3" max="2.5" step="0.05" value="1.0">
-  </div>
-  <div class="ctl">
     <label>Segment width <b id="v-segw">1.0</b></label>
     <input id="segw" type="range" min="0.3" max="2" step="0.05" value="1.0">
+  </div>
+  <div class="ctl">
+    <label>Segment height <b id="v-segh">1.0</b></label>
+    <input id="segh" type="range" min="0.3" max="5" step="0.05" value="1.0">
   </div>
   <div class="ctl">
     <label>Offset Segments <b id="v-offset">0</b></label>
@@ -474,7 +474,7 @@ const state = {
   foldCount: 8,
   depth: 1.0,
   segWidth: 1.0,
-  panelHeight: 1.0,    // height multiplier (world H = 3.0 * this)
+  segHeight: 1.0,      // height multiplier (world H = 3.0 * this)
   offset: 0,
   facetFront: 0.4,
   facetBack: 0.4,
@@ -568,18 +568,32 @@ if(window.ResizeObserver){
 }
 
 let pinchDist = 0;    // active two-finger pinch distance (0 = none)
-// let the canvas own single-finger horizontal gestures (walk) without
-// the page scrolling underneath it
-renderer.domElement.style.touchAction = 'none';
+// The viewer should let you WALK (horizontal drag) without trapping
+// vertical page scroll. touch-action:pan-y keeps vertical scrolling with
+// the page; we only treat a gesture as "walking" once it's clearly more
+// horizontal than vertical.
+renderer.domElement.style.touchAction = 'pan-y';
+let downX=0, downY=0, gestureDecided=false, isWalk=false;
 renderer.domElement.addEventListener('pointerdown', e=>{
   if(e.pointerType==='touch' && e.isPrimary===false) return; // ignore 2nd finger
   dragging=true; lastX=e.clientX;
-  try{ renderer.domElement.setPointerCapture(e.pointerId); }catch(_){}
+  downX=e.clientX; downY=e.clientY;
+  gestureDecided=false; isWalk=(e.pointerType!=='touch'); // mouse = always walk
 });
-window.addEventListener('pointerup', ()=>dragging=false);
-window.addEventListener('pointercancel', ()=>dragging=false);
+window.addEventListener('pointerup', ()=>{dragging=false; gestureDecided=false; isWalk=false;});
+window.addEventListener('pointercancel', ()=>{dragging=false; gestureDecided=false; isWalk=false;});
 window.addEventListener('pointermove', e=>{
   if(!dragging || pinchDist) return;   // don't walk while pinching
+  // On touch, decide once whether this is a horizontal WALK or a
+  // vertical SCROLL. If vertical, let the page take over (bail out).
+  if(!gestureDecided && e.pointerType==='touch'){
+    const dx=Math.abs(e.clientX-downX), dy=Math.abs(e.clientY-downY);
+    if(dx<6 && dy<6) return;                 // too small to tell yet
+    isWalk = dx > dy;                        // more horizontal → walk
+    gestureDecided = true;
+    if(isWalk){ try{ renderer.domElement.setPointerCapture(e.pointerId); }catch(_){} }
+  }
+  if(!isWalk) return;                        // vertical: page scrolls
   orbit = Math.max(-1, Math.min(1, orbit + (e.clientX-lastX)*0.004));
   lastX = e.clientX;
   document.getElementById('walk').value = orbit;
@@ -665,7 +679,7 @@ function rebuild(){
   // Then trim each face top/bottom to the chosen silhouette so the
   // folded SHEET itself takes the shape (circle, diamond, triangle…).
   const faces = state.profile.faces;
-  const H = 3.0 * (state.panelHeight || 1.0);
+  const H = 3.0 * (state.segHeight || 1.0);
   const shape = state.shape || 'rectangle';
 
   let vx = 0;
@@ -753,7 +767,7 @@ loop();
 
 // ---------- controls wiring ----------
 const fmt = (key,v)=>{
-  if(['depth','segWidth','facetFront','facetBack','offset','panelHeight'].includes(key)) return v.toFixed(2);
+  if(['depth','segWidth','facetFront','facetBack','offset','segHeight'].includes(key)) return v.toFixed(2);
   return v;
 };
 const bind = (id, key, disp, parse=parseFloat)=>{
@@ -773,7 +787,7 @@ const bind = (id, key, disp, parse=parseFloat)=>{
 bind('faces','facesPerFold','v-faces', v=>parseInt(v));
 bind('folds','foldCount','v-folds', v=>parseInt(v));
 bind('depth','depth','v-depth');
-bind('height','panelHeight','v-height');
+bind('segh','segHeight','v-segh');
 bind('segw','segWidth','v-segw');
 bind('offset','offset','v-offset');
 bind('facetf','facetFront','v-facetf');
@@ -1002,7 +1016,7 @@ window.AGAM_exportFront = ()=>{
   // Front view width = sum of FRONT-projected widths (foreshortened).
   const frontW = faces.map(f=> f.facet ? f.trueWidth : f.trueWidth*Math.cos(Math.atan2(2*(0.5*s.depth), s.segWidth)) );
   const totalFW = frontW.reduce((a,b)=>a+b,0);
-  const panelH = 3.0*(s.panelHeight||1);
+  const panelH = 3.0*(s.segHeight||1);
   const scale = Math.min(availW/totalFW, availH/panelH);
   const drawH = panelH*scale;
   const topY = margin + (availH-drawH)/2;
